@@ -25,11 +25,16 @@ predictable and well tested.
 
 ## Install
 
+Not published to npm yet — install from source:
+
 ```bash
-npm install -g @printemps-tokyo/subtidy
-# or run once:
-npx @printemps-tokyo/subtidy check captions.srt
+git clone https://github.com/printemps-tokyo/subtidy
+cd subtidy
+npm install && npm run build
+npm link   # optional: puts the `subtidy` command on your PATH
 ```
+
+Then run `subtidy …` (after `npm link`), or `node dist/cli.js …` from the clone.
 
 ## Commands
 
