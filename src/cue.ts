@@ -45,7 +45,10 @@ export const DEFAULT_LINT_OPTIONS: LintOptions = {
 export interface LintIssue {
   index: number;
   kind: "cps" | "min-duration" | "line-length";
-  /** The measured value: chars/s, display time in ms, or line length in chars. */
+  /**
+   * The measured value: chars/s (rounded to two decimals, never rounded down
+   * to the limit or below), display time in ms, or line length in chars.
+   */
   value: number;
   /** The threshold the value violated. */
   limit: number;
@@ -183,7 +186,14 @@ export function lintCues(cues: Cue[], options: Partial<LintOptions> = {}): LintI
     if (durationMs > 0) {
       const cps = (countChars(c.text.replace(/\n/g, "")) * 1000) / durationMs;
       if (cps > maxCps) {
-        const value = Math.round(cps * 10) / 10;
+        // Report two decimals, and never round the value down to (or below)
+        // the limit: a cue at 20.004 chars/s with limit 20 must not print
+        // "reads at 20 chars/s (limit 20)". The comparison above always uses
+        // the exact value.
+        let value = Math.round(cps * 100) / 100;
+        if (value <= maxCps) {
+          value = Math.ceil(cps * 100) / 100;
+        }
         issues.push({
           index: i,
           kind: "cps",

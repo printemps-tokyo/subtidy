@@ -114,6 +114,34 @@ describe("lintCues", () => {
     ]);
   });
 
+  it("prints a value visibly above the limit for a barely-over cue", () => {
+    // 501 chars over 25s is 20.04 chars/s: over the limit of 20. The message
+    // must not round this down to "20", which would look like an at-limit
+    // value being flagged.
+    const issues = lintCues([cue(0, 25000, "a".repeat(501))], { maxLineLength: 1000 });
+    expect(issues).toEqual([
+      {
+        index: 0,
+        kind: "cps",
+        value: 20.04,
+        limit: 20,
+        message: "reads at 20.04 chars/s (limit 20)",
+      },
+    ]);
+    expect(issues[0]!.value).toBeGreaterThan(issues[0]!.limit);
+  });
+
+  it("rounds the printed value up when rounding down would hide the violation", () => {
+    // 4001 chars over 200s is 20.005 chars/s. Plain rounding to two decimals
+    // would print 20 chars/s, so the value is rounded up to 20.01 instead.
+    const issues = lintCues([cue(0, 200000, "a".repeat(4001))], { maxLineLength: 5000 });
+    expect(issues.map((i) => i.kind)).toEqual(["cps"]);
+    const cps = issues[0]!;
+    expect(cps.value).toBe(20.01);
+    expect(cps.value).toBeGreaterThan(cps.limit);
+    expect(cps.message).toBe("reads at 20.01 chars/s (limit 20)");
+  });
+
   it("excludes newlines from the CPS character count", () => {
     // 20 visible chars split over two lines: the \n must not push CPS to 21.
     expect(lintCues([cue(0, 1000, "a".repeat(10) + "\n" + "a".repeat(10))])).toEqual([]);
@@ -183,6 +211,6 @@ describe("lintCues", () => {
     const issues = lintCues([cue(0, 500, "a".repeat(43))]);
     expect(issues.map((i) => i.kind)).toEqual(["cps", "min-duration", "line-length"]);
     expect(issues[0]?.value).toBe(86); // 43 chars / 0.5s
-    expect(lintCues([cue(0, 900, "a".repeat(20))])[0]?.value).toBe(22.2);
+    expect(lintCues([cue(0, 900, "a".repeat(20))])[0]?.value).toBe(22.22);
   });
 });
