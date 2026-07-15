@@ -213,4 +213,51 @@ describe("lintCues", () => {
     expect(issues[0]?.value).toBe(86); // 43 chars / 0.5s
     expect(lintCues([cue(0, 900, "a".repeat(20))])[0]?.value).toBe(22.22);
   });
+
+  it("counts a decomposed character the same as its precomposed form", () => {
+    // "café" precomposed is 4 code points; decomposed ("cafe" + combining
+    // acute) is 5. NFC normalization collapses the decomposed form so both
+    // count as 4 and are treated identically. At maxCps 4 over 1000ms the
+    // precomposed form is exactly at the limit; without NFC the decomposed
+    // form would over-count to 5 chars/s and be flagged.
+    const precomposed = "café"; // é as U+00E9
+    const decomposed = "café"; // e + U+0301 combining acute
+    expect(decomposed).not.toBe(precomposed); // different code point sequences
+    const opts = { maxCps: 4, maxLineLength: 1000 };
+    expect(lintCues([cue(0, 1000, decomposed)], opts)).toEqual(
+      lintCues([cue(0, 1000, precomposed)], opts),
+    );
+    expect(lintCues([cue(0, 1000, decomposed)], opts)).toEqual([]);
+  });
+
+  it("leaves an ordinary CJK string's character count unaffected by NFC", () => {
+    // Hiragana has no canonical decomposition, so NFC is a no-op here: the
+    // count stays 13, matching the raw code point count.
+    const issues = lintCues([cue(0, 1000, "あ".repeat(13))], { maxCps: 12 });
+    expect(issues.map((i) => i.kind)).toEqual(["cps"]);
+    expect(issues[0]?.value).toBe(13);
+  });
+
+  it("flips the CPS decision for a borderline previously over-counted string", () => {
+    // 20 acute-e over 1000ms. Precomposed that is 20 code points = exactly the
+    // default limit of 20, so it passes. Written decomposed it is 40 code
+    // points and, before NFC normalization, over-counted to 40 chars/s and was
+    // flagged. NFC collapses it back to 20 chars/s, so it now passes too.
+    const precomposed = "é".repeat(20); // 20 code points -> 20 chars/s
+    const decomposed = "é".repeat(20); // 40 code points raw -> 20 after NFC
+    expect(Array.from(decomposed).length).toBe(40); // over-counted before the fix
+    expect(lintCues([cue(0, 1000, decomposed)], { maxLineLength: 1000 })).toEqual([]);
+    expect(lintCues([cue(0, 1000, decomposed)], { maxLineLength: 1000 })).toEqual(
+      lintCues([cue(0, 1000, precomposed)], { maxLineLength: 1000 }),
+    );
+  });
+
+  it("measures line length after NFC normalization too", () => {
+    // 42 decomposed acute-e is 84 raw code points but 42 after NFC, so the
+    // line sits exactly at the default limit and passes; a 43rd pushes it over.
+    expect(lintCues([cue(0, 10_000, "é".repeat(42))])).toEqual([]);
+    const over = lintCues([cue(0, 10_000, "é".repeat(43))], { maxCps: 1000 });
+    expect(over.map((i) => i.kind)).toEqual(["line-length"]);
+    expect(over[0]?.value).toBe(43);
+  });
 });

@@ -167,8 +167,19 @@ export function validateCues(cues: Cue[]): CueIssue[] {
   return issues;
 }
 
-/** Count Unicode code points, so characters outside the BMP count once. */
-const countChars = (text: string): number => Array.from(text).length;
+/**
+ * Count Unicode code points after NFC normalization. Normalizing first
+ * collapses canonical decompositions, so a character written as a base plus a
+ * combining mark (e.g. "e" + U+0301 combining acute) counts the same as its
+ * precomposed form ("é"), and many CJK compatibility forms count fairly.
+ * Characters outside the BMP still count once.
+ *
+ * This is an NFC-based approximation, not full grapheme clustering: sequences
+ * that have no single canonical code point still count as several. For
+ * instance a ZWJ emoji sequence (family, flags, skin-tone modifiers) counts as
+ * multiple characters. That is acceptable and intentional here.
+ */
+const countChars = (text: string): number => Array.from(text.normalize("NFC")).length;
 
 /**
  * Report readability problems without modifying the cues: reading speed above

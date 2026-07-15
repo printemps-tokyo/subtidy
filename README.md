@@ -169,10 +169,16 @@ subtidy check captions.srt
 | `--strict` | off | Readability warnings also make the exit code non-zero |
 | `--json` | off | Print issues as JSON to stdout |
 
-Characters are counted as Unicode code points, and a value exactly at a
-threshold passes. The CPS default of 20 suits Latin scripts; CJK text carries
-more meaning per character and is read slower, so pass a lower threshold such
-as `--cps 12` for Japanese, Chinese, or Korean subtitles.
+Characters are counted as Unicode code points after NFC normalization, and a
+value exactly at a threshold passes. Normalizing first means a character
+written decomposed (a base letter plus a combining mark, e.g. `e` + U+0301)
+counts the same as its precomposed form (`é`), rather than inflating the count.
+This is an NFC-based approximation, not full grapheme clustering: a sequence
+with no single canonical code point, such as a ZWJ emoji sequence, still counts
+as multiple characters. Both the reading-speed and line-length checks count
+this way. The CPS default of 20 suits Latin scripts; CJK text carries more
+meaning per character and is read slower, so pass a lower threshold such as
+`--cps 12` for Japanese, Chinese, or Korean subtitles.
 
 `--json` emits `{"issues": [...]}` where each issue has `type`, `cue`
 (1-based), `start`, `end`, `value`, `limit`, `message`, and `severity`
