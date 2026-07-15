@@ -8,6 +8,7 @@ import {
   fixOverlaps,
   snapGaps,
   validateCues,
+  lintCues,
   type Cue,
 } from "../src/cue.js";
 
@@ -91,5 +92,97 @@ describe("validateCues", () => {
 
   it("returns no issues for clean input", () => {
     expect(validateCues([cue(0, 1000), cue(1000, 2000)])).toEqual([]);
+  });
+});
+
+describe("lintCues", () => {
+  it("passes a cue exactly at the CPS threshold", () => {
+    // 20 chars over 1000ms is exactly 20 chars/s: at the limit, not over it.
+    expect(lintCues([cue(0, 1000, "a".repeat(20))])).toEqual([]);
+  });
+
+  it("flags a cue just over the CPS threshold", () => {
+    const issues = lintCues([cue(0, 1000, "a".repeat(21))]);
+    expect(issues).toEqual([
+      {
+        index: 0,
+        kind: "cps",
+        value: 21,
+        limit: 20,
+        message: "reads at 21 chars/s (limit 20)",
+      },
+    ]);
+  });
+
+  it("excludes newlines from the CPS character count", () => {
+    // 20 visible chars split over two lines: the \n must not push CPS to 21.
+    expect(lintCues([cue(0, 1000, "a".repeat(10) + "\n" + "a".repeat(10))])).toEqual([]);
+  });
+
+  it("honors a custom CPS threshold (e.g. lower for CJK)", () => {
+    const slow = lintCues([cue(0, 1000, "あ".repeat(13))], { maxCps: 12 });
+    expect(slow.map((i) => i.kind)).toEqual(["cps"]);
+    expect(slow[0]?.value).toBe(13);
+    expect(slow[0]?.limit).toBe(12);
+  });
+
+  it("passes a cue displayed exactly for the minimum duration", () => {
+    expect(lintCues([cue(0, 700, "hi")])).toEqual([]);
+  });
+
+  it("flags a cue displayed just under the minimum duration", () => {
+    const issues = lintCues([cue(0, 699, "hi")]);
+    expect(issues).toEqual([
+      {
+        index: 0,
+        kind: "min-duration",
+        value: 699,
+        limit: 700,
+        message: "displayed for 699ms (minimum 700ms)",
+      },
+    ]);
+  });
+
+  it("honors a custom minimum duration", () => {
+    expect(lintCues([cue(0, 699, "hi")], { minDurationMs: 500 })).toEqual([]);
+  });
+
+  it("skips CPS and duration checks for non-positive durations", () => {
+    // validateCues owns non-positive durations; lint must not double-report.
+    expect(lintCues([cue(1000, 1000, "a".repeat(50))]).map((i) => i.kind)).toEqual([
+      "line-length",
+    ]);
+    expect(lintCues([cue(1000, 900, "hi")])).toEqual([]);
+  });
+
+  it("passes lines exactly at the length limit, per line of a multi-line cue", () => {
+    const text = "a".repeat(42) + "\n" + "b".repeat(42);
+    expect(lintCues([cue(0, 10_000, text)])).toEqual([]);
+  });
+
+  it("flags the longest line of a multi-line cue once", () => {
+    const text = "short line\n" + "b".repeat(43);
+    const issues = lintCues([cue(0, 10_000, text)]);
+    expect(issues).toEqual([
+      {
+        index: 0,
+        kind: "line-length",
+        value: 43,
+        limit: 42,
+        message: "line is 43 chars (limit 42)",
+      },
+    ]);
+  });
+
+  it("counts characters as code points, not UTF-16 units", () => {
+    // 22 astral emoji are 44 UTF-16 units but only 22 characters.
+    expect(lintCues([cue(0, 10_000, "𝄞".repeat(22))])).toEqual([]);
+  });
+
+  it("reports every violated check for the same cue with a rounded CPS value", () => {
+    const issues = lintCues([cue(0, 500, "a".repeat(43))]);
+    expect(issues.map((i) => i.kind)).toEqual(["cps", "min-duration", "line-length"]);
+    expect(issues[0]?.value).toBe(86); // 43 chars / 0.5s
+    expect(lintCues([cue(0, 900, "a".repeat(20))])[0]?.value).toBe(22.2);
   });
 });

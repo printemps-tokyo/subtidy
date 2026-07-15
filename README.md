@@ -43,7 +43,7 @@ subtidy shift   [options] <file|->   # move every cue by N seconds (sync fix)
 subtidy retime  [options] <file|->   # scale every timestamp (frame-rate fix)
 subtidy convert [options] <file|->   # convert between .srt and .vtt
 subtidy clean   [options] <file|->   # sort, drop empty, fix overlaps, renumber
-subtidy check            <file|->    # report timing problems (non-zero exit)
+subtidy check   [options] <file|->   # report timing errors and readability warnings
 ```
 
 The input format is read from the file extension. By default the result is
@@ -146,17 +146,43 @@ subtidy clean --keep-overlaps --keep-empty in.srt  # opt out of those steps
 
 ### check
 
-Report timing problems without changing the file. Exits non-zero when any issue
-is found, so it fits in CI or a pre-commit hook.
+Report problems without changing the file. Two kinds of issue are found:
+
+- Timing errors: non-positive duration, overlap with the next cue, cues out of
+  order, and empty text. These always make the exit code non-zero.
+- Readability warnings: reading speed, display time, and line length, each
+  against a configurable threshold. Warnings are reported but do not affect
+  the exit code unless you pass `--strict`.
 
 ```bash
 subtidy check captions.srt
-#  cue 4: overlap - overlaps the next cue
-#  found 1 issue(s)
+#  cue 4 (00:00:12.000 --> 00:00:13.500): overlap - overlaps the next cue
+#  cue 7 (00:00:21.000 --> 00:00:21.500): warning: min-duration - displayed for 500ms (minimum 700ms)
+#  found 1 error(s), 1 warning(s)
 ```
 
-Reported issues: non-positive duration, overlap with the next cue, cues out of
-order, and empty text.
+| Option | Default | Description |
+| --- | --- | --- |
+| `--cps <n>` | 20 | Maximum reading speed in characters per second (newlines excluded) |
+| `--min-duration <ms>` | 700 | Minimum time a cue must stay on screen |
+| `--max-line <chars>` | 42 | Maximum characters per line (each line of a multi-line cue) |
+| `--strict` | off | Readability warnings also make the exit code non-zero |
+| `--json` | off | Print issues as JSON to stdout |
+
+Characters are counted as Unicode code points, and a value exactly at a
+threshold passes. The CPS default of 20 suits Latin scripts; CJK text carries
+more meaning per character and is read slower, so pass a lower threshold such
+as `--cps 12` for Japanese, Chinese, or Korean subtitles.
+
+`--json` emits `{"issues": [...]}` where each issue has `type`, `cue`
+(1-based), `start`, `end`, `value`, `limit`, `message`, and `severity`
+(`value` and `limit` are `null` for timing errors). Together with `--strict`
+it drops straight into CI:
+
+```yaml
+# GitHub Actions: fail the build on timing errors or readability warnings
+- run: subtidy check --strict --json captions.srt
+```
 
 ## Programmatic API
 
@@ -168,12 +194,14 @@ import {
   rescaleCues,
   fixOverlaps,
   validateCues,
+  lintCues,
 } from "@printemps-tokyo/subtidy";
 
 const cues = parseSrt(srtText);
 const synced = shiftCues(cues, 2500); // milliseconds
 const vtt = serializeVtt(fixOverlaps(synced));
-const issues = validateCues(cues);
+const timingIssues = validateCues(cues);
+const readability = lintCues(cues, { maxCps: 12 }); // thresholds optional
 ```
 
 All transforms operate on `Cue` objects (`{ startMs, endMs, text }`) in whole

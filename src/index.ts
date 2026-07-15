@@ -8,7 +8,7 @@
 
 export { parseTimeMs, formatTimeSrt, formatTimeVtt } from "./time.js";
 
-export type { Cue, CueIssue } from "./cue.js";
+export type { Cue, CueIssue, LintIssue, LintOptions } from "./cue.js";
 export {
   sortCues,
   shiftCues,
@@ -18,7 +18,12 @@ export {
   fixOverlaps,
   snapGaps,
   validateCues,
+  lintCues,
+  DEFAULT_LINT_OPTIONS,
 } from "./cue.js";
+
+export type { CheckIssue, CheckSeverity } from "./check.js";
+export { buildCheckIssues, checkExitCode } from "./check.js";
 
 export { parseCues } from "./parse.js";
 export { parseSrt, serializeSrt } from "./srt.js";

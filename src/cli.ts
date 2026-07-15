@@ -13,10 +13,12 @@ import {
   dropEmpty,
   fixOverlaps,
   snapGaps,
-  validateCues,
   sortCues,
+  buildCheckIssues,
+  checkExitCode,
   type Cue,
   type SubFormat,
+  type LintOptions,
 } from "./index.js";
 
 const HELP = `subtidy - tidy, shift, and convert subtitle files (.srt / .vtt)
@@ -29,7 +31,8 @@ Commands:
   retime   Scale every timestamp by a factor (frame-rate mismatch)
   convert  Convert between .srt and .vtt
   clean    Sort, drop empty cues, fix overlaps, and renumber
-  check    Report timing problems (non-zero exit if any are found)
+  check    Report timing errors and readability warnings (non-zero exit on
+           timing errors; add --strict to fail on warnings too)
 
 Pass "-" as the input file to read the subtitle text from stdin. Without
 --output the result is written to stdout, so subtidy composes in a pipe.
@@ -57,12 +60,22 @@ clean options:
   --keep-overlaps       Do not truncate overlapping cues
   --keep-empty          Do not drop empty cues
 
+check options:
+  --cps <n>             Warn when a cue reads faster than n characters per
+                        second, newlines excluded (default 20; CJK is read
+                        slower per character, so consider a lower value)
+  --min-duration <ms>   Warn when a cue is shown for less than this (default 700)
+  --max-line <chars>    Warn when a line is longer than this (default 42)
+  --strict              Readability warnings also make the exit code non-zero
+  --json                Print issues as JSON to stdout, for CI
+
 Examples:
   subtidy shift --by +2.5 -o out.srt in.srt
   subtidy retime --scale 23.976/25 -o out.srt in.srt
   subtidy convert -o out.vtt in.srt
   subtidy clean --snap-gaps 120 -o out.srt in.srt
   subtidy check in.vtt
+  subtidy check --strict --json captions.srt
   cat raw.srt | subtidy clean - > tidy.srt
   cat headerless.vtt | subtidy clean --input vtt - > tidy.vtt
   curl -s https://example.com/captions.vtt | subtidy convert --to srt - > out.srt
@@ -106,6 +119,24 @@ function parseMs(name: string, value: string): number {
   return n;
 }
 
+/** Parse a positive number, integer or not (e.g. a CPS threshold like 12.5). */
+function parsePositiveNumber(name: string, value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`--${name} must be a positive number (got "${value}")`);
+  }
+  return n;
+}
+
+/** Parse a positive integer (a character count). */
+function parsePositiveInt(name: string, value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--${name} must be a positive integer (got "${value}")`);
+  }
+  return n;
+}
+
 interface Values {
   output?: string;
   by?: string;
@@ -116,6 +147,11 @@ interface Values {
   "snap-gaps"?: string;
   "keep-overlaps"?: boolean;
   "keep-empty"?: boolean;
+  cps?: string;
+  "min-duration"?: string;
+  "max-line"?: string;
+  strict?: boolean;
+  json?: boolean;
 }
 
 /** Narrow an --input/--to value to a subtitle format, or return undefined. */
@@ -178,18 +214,42 @@ async function readVersion(): Promise<string> {
   }
 }
 
-function runCheck(text: string, inFormat: SubFormat): number {
+function runCheck(text: string, inFormat: SubFormat, values: Values): number {
+  const lintOptions: Partial<LintOptions> = {};
+  if (values.cps !== undefined) {
+    lintOptions.maxCps = parsePositiveNumber("cps", values.cps);
+  }
+  if (values["min-duration"] !== undefined) {
+    lintOptions.minDurationMs = parseMs("min-duration", values["min-duration"]);
+  }
+  if (values["max-line"] !== undefined) {
+    lintOptions.maxLineLength = parsePositiveInt("max-line", values["max-line"]);
+  }
+
   const cues = parseByFormat(text, inFormat);
-  const issues = validateCues(cues);
+  const issues = buildCheckIssues(cues, lintOptions);
+  const exit = checkExitCode(issues, values.strict === true);
+
+  if (values.json) {
+    process.stdout.write(JSON.stringify({ issues }, null, 2) + "\n");
+    return exit;
+  }
   if (issues.length === 0) {
     process.stdout.write(`ok: ${cues.length} cue(s), no issues\n`);
-    return 0;
+    return exit;
   }
+  let errors = 0;
+  let warnings = 0;
   for (const issue of issues) {
-    process.stderr.write(`cue ${issue.index + 1}: ${issue.kind} - ${issue.message}\n`);
+    if (issue.severity === "error") errors++;
+    else warnings++;
+    const label = issue.severity === "warning" ? "warning: " : "";
+    process.stderr.write(
+      `cue ${issue.cue} (${issue.start} --> ${issue.end}): ${label}${issue.type} - ${issue.message}\n`,
+    );
   }
-  process.stderr.write(`found ${issues.length} issue(s)\n`);
-  return 1;
+  process.stderr.write(`found ${errors} error(s), ${warnings} warning(s)\n`);
+  return exit;
 }
 
 async function main(): Promise<number> {
@@ -223,6 +283,11 @@ async function main(): Promise<number> {
         "snap-gaps": { type: "string" },
         "keep-overlaps": { type: "boolean", default: false },
         "keep-empty": { type: "boolean", default: false },
+        cps: { type: "string" },
+        "min-duration": { type: "string" },
+        "max-line": { type: "string" },
+        strict: { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
       },
     });
     values = parsed.values as Values;
@@ -247,6 +312,18 @@ async function main(): Promise<number> {
   if (values.from !== undefined && command !== "shift") {
     process.stderr.write("error: --from is only valid with shift (a timestamp like 00:10:00)\n");
     return 1;
+  }
+  if (command !== "check") {
+    const checkFlags: string[] = [];
+    if (values.cps !== undefined) checkFlags.push("--cps");
+    if (values["min-duration"] !== undefined) checkFlags.push("--min-duration");
+    if (values["max-line"] !== undefined) checkFlags.push("--max-line");
+    if (values.strict) checkFlags.push("--strict");
+    if (values.json) checkFlags.push("--json");
+    if (checkFlags.length > 0) {
+      process.stderr.write(`error: ${checkFlags.join(", ")} only valid with check\n`);
+      return 1;
+    }
   }
   const toFormat = asFormat(values.to);
   if (values.to !== undefined && toFormat === undefined) {
@@ -274,7 +351,7 @@ async function main(): Promise<number> {
 
   if (command === "check") {
     try {
-      return runCheck(text, inFormat);
+      return runCheck(text, inFormat, values);
     } catch (err) {
       process.stderr.write(`error: ${(err as Error).message}\n`);
       return 1;
