@@ -39,11 +39,11 @@ Then run `subtidy …` (after `npm link`), or `node dist/cli.js …` from the cl
 ## Commands
 
 ```bash
-subtidy shift   [options] <file>   # move every cue by N seconds (sync fix)
-subtidy retime  [options] <file>   # scale every timestamp (frame-rate fix)
-subtidy convert [options] <file>   # convert between .srt and .vtt
-subtidy clean   [options] <file>   # sort, drop empty, fix overlaps, renumber
-subtidy check            <file>    # report timing problems (non-zero exit)
+subtidy shift   [options] <file|->   # move every cue by N seconds (sync fix)
+subtidy retime  [options] <file|->   # scale every timestamp (frame-rate fix)
+subtidy convert [options] <file|->   # convert between .srt and .vtt
+subtidy clean   [options] <file|->   # sort, drop empty, fix overlaps, renumber
+subtidy check            <file|->    # report timing problems (non-zero exit)
 ```
 
 The input format is read from the file extension. By default the result is
@@ -51,7 +51,29 @@ written to stdout in the input's format; pass `-o <file>` to write to a file,
 whose extension picks the output format (so you can convert and transform in
 one step).
 
+Two options override the extension-based detection on every command:
+
+| Option | Description |
+| --- | --- |
+| `--from <srt\|vtt>` | Input format, for when it cannot be inferred from the input extension |
+| `--to <srt\|vtt>` | Output format, regardless of the output extension |
+
 Run `subtidy --help` for the full option list.
+
+### Piping
+
+Pass `-` as the input file to read the subtitle text from stdin. Without
+`-o/--output` the result goes to stdout, so `subtidy` composes in a pipe:
+
+```bash
+ytsum --format srt https://youtu.be/... | subtidy clean - > tidy.srt
+curl -s https://example.com/captions.vtt | subtidy convert --to srt - > out.srt
+cat in.srt | subtidy shift --by +2.5 - | subtidy clean --snap-gaps 120 -
+```
+
+With stdin the input format is auto-detected by content: a leading `WEBVTT`
+header means WebVTT, anything else is treated as SubRip. Pass
+`--from <srt|vtt>` to override the detection explicitly.
 
 ### shift
 
@@ -67,7 +89,7 @@ subtidy shift --by 3 --from 00:10:00 -o out.srt in.srt  # only from 10:00 on
 | Option | Description |
 | --- | --- |
 | `--by <seconds>` | Shift amount, e.g. `2.5` or `-1.25` (required) |
-| `--from <timestamp>` | Only shift cues at/after this time (e.g. `00:10:00`) |
+| `--from <timestamp>` | Only shift cues at/after this time (e.g. `00:10:00`). A value of `srt` or `vtt` is read as the input format instead of a timestamp |
 | `-o, --output <file>` | Output path (default: stdout) |
 
 ### retime
@@ -88,11 +110,12 @@ subtidy retime --scale 1.0427 in.srt
 ### convert
 
 Convert between `.srt` and `.vtt`. The target format comes from the `-o`
-extension.
+extension, or from `--to` when writing to stdout.
 
 ```bash
 subtidy convert -o out.vtt in.srt
 subtidy convert -o out.srt in.vtt
+subtidy convert --to vtt in.srt > out.vtt
 ```
 
 WebVTT headers, `NOTE`/`STYLE`/`REGION` blocks, cue identifiers, and cue

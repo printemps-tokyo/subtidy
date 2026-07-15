@@ -25,4 +25,11 @@ export { parseSrt, serializeSrt } from "./srt.js";
 export { parseVtt, serializeVtt } from "./vtt.js";
 
 export type { SubFormat } from "./format.js";
-export { formatFromPath, parseByFormat, serializeByFormat } from "./format.js";
+export {
+  formatFromPath,
+  sniffFormat,
+  resolveInputFormat,
+  resolveOutputFormat,
+  parseByFormat,
+  serializeByFormat,
+} from "./format.js";

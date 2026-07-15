@@ -5,7 +5,8 @@ import {
   parseTimeMs,
   parseByFormat,
   serializeByFormat,
-  formatFromPath,
+  resolveInputFormat,
+  resolveOutputFormat,
   shiftCues,
   shiftCuesFrom,
   rescaleCues,
@@ -21,7 +22,7 @@ import {
 const HELP = `subtidy - tidy, shift, and convert subtitle files (.srt / .vtt)
 
 Usage:
-  subtidy <command> [options] <file>
+  subtidy <command> [options] <file | ->
 
 Commands:
   shift    Move every cue by a number of seconds (sync correction)
@@ -30,15 +31,25 @@ Commands:
   clean    Sort, drop empty cues, fix overlaps, and renumber
   check    Report timing problems (non-zero exit if any are found)
 
+Pass "-" as the input file to read the subtitle text from stdin. Without
+--output the result is written to stdout, so subtidy composes in a pipe.
+
 Common options:
   -o, --output <file>   Write here; the extension picks the output format
                         (default: write to stdout in the input's format)
+  --from <srt|vtt>      Input format, for when it cannot be inferred from the
+                        input extension. Stdin defaults to auto-detect: a
+                        leading WEBVTT header means vtt, anything else is
+                        treated as srt.
+  --to <srt|vtt>        Output format, regardless of the output extension
   -h, --help            Show this help
   -v, --version         Show version
 
 shift options:
   --by <seconds>        Shift amount, e.g. 2.5 or -1.25 (required)
-  --from <timestamp>    Only shift cues at/after this time (e.g. 00:10:00)
+  --from <timestamp>    Only shift cues at/after this time (e.g. 00:10:00).
+                        For shift, a --from value of "srt" or "vtt" is read
+                        as the input format instead of a timestamp.
 
 retime options:
   --scale <factor>      A ratio like 23.976/25 or a number like 0.959 (required)
@@ -54,6 +65,8 @@ Examples:
   subtidy convert -o out.vtt in.srt
   subtidy clean --snap-gaps 120 -o out.srt in.srt
   subtidy check in.vtt
+  cat raw.srt | subtidy clean - > tidy.srt
+  curl -s https://example.com/captions.vtt | subtidy convert --to srt - > out.srt
 `;
 
 /** Parse a signed seconds value (e.g. "+2.5", "-1.25") into milliseconds. */
@@ -98,10 +111,25 @@ interface Values {
   output?: string;
   by?: string;
   from?: string;
+  to?: string;
   scale?: string;
   "snap-gaps"?: string;
   "keep-overlaps"?: boolean;
   "keep-empty"?: boolean;
+}
+
+/** Narrow a --from/--to value to a subtitle format, or return undefined. */
+function asFormat(value: string | undefined): SubFormat | undefined {
+  return value === "srt" || value === "vtt" ? value : undefined;
+}
+
+/** Read all of stdin as UTF-8 text. */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** Run `clean`'s default tidy pass, honoring the keep-* opt-outs. */
@@ -150,8 +178,7 @@ async function readVersion(): Promise<string> {
   }
 }
 
-async function runCheck(path: string, inFormat: SubFormat): Promise<number> {
-  const text = await readFile(path, "utf8");
+function runCheck(text: string, inFormat: SubFormat): number {
   const cues = parseByFormat(text, inFormat);
   const issues = validateCues(cues);
   if (issues.length === 0) {
@@ -190,6 +217,7 @@ async function main(): Promise<number> {
         output: { type: "string", short: "o" },
         by: { type: "string" },
         from: { type: "string" },
+        to: { type: "string" },
         scale: { type: "string" },
         "snap-gaps": { type: "string" },
         "keep-overlaps": { type: "boolean", default: false },
@@ -204,16 +232,40 @@ async function main(): Promise<number> {
   }
 
   if (positionals.length !== 1) {
-    process.stderr.write("error: expected exactly one input file\n\n" + HELP);
+    process.stderr.write("error: expected exactly one input file (or - for stdin)\n\n" + HELP);
     return 1;
   }
   const inputPath = positionals[0] as string;
+  const isStdin = inputPath === "-";
+
+  // --from doubles as shift's timestamp filter; a value of srt/vtt always
+  // selects the input format, anything else stays a timestamp for shift.
+  const fromFormat = asFormat(values.from);
+  if (fromFormat !== undefined) {
+    values.from = undefined;
+  } else if (values.from !== undefined && command !== "shift") {
+    process.stderr.write(`error: --from must be "srt" or "vtt" (got "${values.from}")\n`);
+    return 1;
+  }
+  const toFormat = asFormat(values.to);
+  if (values.to !== undefined && toFormat === undefined) {
+    process.stderr.write(`error: --to must be "srt" or "vtt" (got "${values.to}")\n`);
+    return 1;
+  }
+
+  let text: string;
+  try {
+    text = isStdin ? await readStdin() : await readFile(inputPath, "utf8");
+  } catch {
+    process.stderr.write(`error: cannot read "${isStdin ? "stdin" : inputPath}"\n`);
+    return 1;
+  }
 
   let inFormat: SubFormat;
   let outFormat: SubFormat;
   try {
-    inFormat = formatFromPath(inputPath);
-    outFormat = values.output ? formatFromPath(values.output) : inFormat;
+    inFormat = resolveInputFormat(inputPath, fromFormat, text);
+    outFormat = resolveOutputFormat(values.output, toFormat, inFormat);
   } catch (err) {
     process.stderr.write(`error: ${(err as Error).message}\n`);
     return 1;
@@ -221,19 +273,11 @@ async function main(): Promise<number> {
 
   if (command === "check") {
     try {
-      return await runCheck(inputPath, inFormat);
+      return runCheck(text, inFormat);
     } catch (err) {
       process.stderr.write(`error: ${(err as Error).message}\n`);
       return 1;
     }
-  }
-
-  let text: string;
-  try {
-    text = await readFile(inputPath, "utf8");
-  } catch {
-    process.stderr.write(`error: cannot read "${inputPath}"\n`);
-    return 1;
   }
 
   let output: string;
