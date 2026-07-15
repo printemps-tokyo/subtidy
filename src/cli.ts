@@ -37,7 +37,7 @@ Pass "-" as the input file to read the subtitle text from stdin. Without
 Common options:
   -o, --output <file>   Write here; the extension picks the output format
                         (default: write to stdout in the input's format)
-  --from <srt|vtt>      Input format, for when it cannot be inferred from the
+  --input <srt|vtt>     Input format, for when it cannot be inferred from the
                         input extension. Stdin defaults to auto-detect: a
                         leading WEBVTT header means vtt, anything else is
                         treated as srt.
@@ -47,9 +47,7 @@ Common options:
 
 shift options:
   --by <seconds>        Shift amount, e.g. 2.5 or -1.25 (required)
-  --from <timestamp>    Only shift cues at/after this time (e.g. 00:10:00).
-                        For shift, a --from value of "srt" or "vtt" is read
-                        as the input format instead of a timestamp.
+  --from <timestamp>    Only shift cues at/after this time (e.g. 00:10:00)
 
 retime options:
   --scale <factor>      A ratio like 23.976/25 or a number like 0.959 (required)
@@ -66,6 +64,7 @@ Examples:
   subtidy clean --snap-gaps 120 -o out.srt in.srt
   subtidy check in.vtt
   cat raw.srt | subtidy clean - > tidy.srt
+  cat headerless.vtt | subtidy clean --input vtt - > tidy.vtt
   curl -s https://example.com/captions.vtt | subtidy convert --to srt - > out.srt
 `;
 
@@ -111,6 +110,7 @@ interface Values {
   output?: string;
   by?: string;
   from?: string;
+  input?: string;
   to?: string;
   scale?: string;
   "snap-gaps"?: string;
@@ -118,7 +118,7 @@ interface Values {
   "keep-empty"?: boolean;
 }
 
-/** Narrow a --from/--to value to a subtitle format, or return undefined. */
+/** Narrow an --input/--to value to a subtitle format, or return undefined. */
 function asFormat(value: string | undefined): SubFormat | undefined {
   return value === "srt" || value === "vtt" ? value : undefined;
 }
@@ -217,6 +217,7 @@ async function main(): Promise<number> {
         output: { type: "string", short: "o" },
         by: { type: "string" },
         from: { type: "string" },
+        input: { type: "string" },
         to: { type: "string" },
         scale: { type: "string" },
         "snap-gaps": { type: "string" },
@@ -238,13 +239,13 @@ async function main(): Promise<number> {
   const inputPath = positionals[0] as string;
   const isStdin = inputPath === "-";
 
-  // --from doubles as shift's timestamp filter; a value of srt/vtt always
-  // selects the input format, anything else stays a timestamp for shift.
-  const fromFormat = asFormat(values.from);
-  if (fromFormat !== undefined) {
-    values.from = undefined;
-  } else if (values.from !== undefined && command !== "shift") {
-    process.stderr.write(`error: --from must be "srt" or "vtt" (got "${values.from}")\n`);
+  const inputFormat = asFormat(values.input);
+  if (values.input !== undefined && inputFormat === undefined) {
+    process.stderr.write(`error: --input must be "srt" or "vtt" (got "${values.input}")\n`);
+    return 1;
+  }
+  if (values.from !== undefined && command !== "shift") {
+    process.stderr.write("error: --from is only valid with shift (a timestamp like 00:10:00)\n");
     return 1;
   }
   const toFormat = asFormat(values.to);
@@ -264,7 +265,7 @@ async function main(): Promise<number> {
   let inFormat: SubFormat;
   let outFormat: SubFormat;
   try {
-    inFormat = resolveInputFormat(inputPath, fromFormat, text);
+    inFormat = resolveInputFormat(inputPath, inputFormat, text);
     outFormat = resolveOutputFormat(values.output, toFormat, inFormat);
   } catch (err) {
     process.stderr.write(`error: ${(err as Error).message}\n`);

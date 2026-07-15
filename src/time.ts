@@ -6,13 +6,14 @@
  * either separator and optional hours so the same code reads both formats.
  */
 
-/** Matches `[HH:]MM:SS[.,]mmm` with either separator and optional hours. */
-const TIME_RE = /^(?:(\d+):)?([0-5]?\d):([0-5]\d)[.,](\d{1,3})$/;
+/** Matches `[HH:]MM:SS[[.,]mmm]` with optional hours and fractional part. */
+const TIME_RE = /^(?:(\d+):)?([0-5]?\d):([0-5]\d)(?:[.,](\d{1,3}))?$/;
 
 /**
  * Parse a subtitle timestamp into whole milliseconds. Accepts both `,` and `.`
- * as the millisecond separator and an optional hours field. Throws on input
- * that is not a valid timestamp.
+ * as the millisecond separator, an optional hours field, and an optional
+ * fractional part (`00:10:00` means zero milliseconds). Throws on input that
+ * is not a valid timestamp.
  */
 export function parseTimeMs(input: string): number {
   const m = TIME_RE.exec(input.trim());
@@ -23,7 +24,7 @@ export function parseTimeMs(input: string): number {
   const minutes = Number(m[2]);
   const seconds = Number(m[3]);
   // Fractional part is right-padded so "5" means 500ms, not 5ms.
-  const millis = Number((m[4] + "000").slice(0, 3));
+  const millis = m[4] ? Number((m[4] + "000").slice(0, 3)) : 0;
   return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
 }
 

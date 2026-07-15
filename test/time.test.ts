@@ -17,6 +17,12 @@ describe("parseTimeMs", () => {
     expect(parseTimeMs("00:00:01.05")).toBe(1050);
   });
 
+  it("accepts timestamps without a fractional part", () => {
+    expect(parseTimeMs("00:10:00")).toBe(600_000);
+    expect(parseTimeMs("10:00")).toBe(600_000);
+    expect(parseTimeMs("00:10:00,5")).toBe(600_500);
+  });
+
   it("rejects invalid input", () => {
     expect(() => parseTimeMs("nope")).toThrow();
     expect(() => parseTimeMs("00:99:00,000")).toThrow();

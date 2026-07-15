@@ -55,7 +55,7 @@ Two options override the extension-based detection on every command:
 
 | Option | Description |
 | --- | --- |
-| `--from <srt\|vtt>` | Input format, for when it cannot be inferred from the input extension |
+| `--input <srt\|vtt>` | Input format, for when it cannot be inferred from the input extension |
 | `--to <srt\|vtt>` | Output format, regardless of the output extension |
 
 Run `subtidy --help` for the full option list.
@@ -73,7 +73,11 @@ cat in.srt | subtidy shift --by +2.5 - | subtidy clean --snap-gaps 120 -
 
 With stdin the input format is auto-detected by content: a leading `WEBVTT`
 header means WebVTT, anything else is treated as SubRip. Pass
-`--from <srt|vtt>` to override the detection explicitly.
+`--input <srt|vtt>` to override the detection explicitly:
+
+```bash
+cat headerless.vtt | subtidy clean --input vtt - > tidy.vtt
+```
 
 ### shift
 
@@ -89,7 +93,7 @@ subtidy shift --by 3 --from 00:10:00 -o out.srt in.srt  # only from 10:00 on
 | Option | Description |
 | --- | --- |
 | `--by <seconds>` | Shift amount, e.g. `2.5` or `-1.25` (required) |
-| `--from <timestamp>` | Only shift cues at/after this time (e.g. `00:10:00`). A value of `srt` or `vtt` is read as the input format instead of a timestamp |
+| `--from <timestamp>` | Only shift cues at/after this time (e.g. `00:10:00`) |
 | `-o, --output <file>` | Output path (default: stdout) |
 
 ### retime
