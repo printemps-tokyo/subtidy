@@ -20,6 +20,9 @@ import {
   type SubFormat,
   type LintOptions,
 } from "./index.js";
+import { usageError } from "./usage.js";
+
+const COMMANDS = new Set(["shift", "retime", "convert", "clean", "check"]);
 
 const HELP = `subtidy - tidy, shift, and convert subtitle files (.srt / .vtt)
 
@@ -293,7 +296,7 @@ async function main(): Promise<number> {
     values = parsed.values as Values;
     positionals = parsed.positionals;
   } catch (err) {
-    process.stderr.write(`error: ${(err as Error).message}\n`);
+    process.stderr.write(usageError(err, COMMANDS.has(command) ? `subtidy ${command}` : "subtidy"));
     return 1;
   }
 
