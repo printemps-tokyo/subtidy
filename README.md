@@ -1,6 +1,6 @@
 # subtidy
 
-> Tidy, shift, and convert `.srt` / `.vtt` subtitle files. Zero-dependency CLI.
+> Tidy, shift, and convert `.srt` / `.vtt` / `.ass` subtitle files. Zero-dependency CLI.
 
 [![CI](https://github.com/printemps-tokyo/subtidy/actions/workflows/ci.yml/badge.svg)](https://github.com/printemps-tokyo/subtidy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
@@ -8,8 +8,8 @@
 `subtidy` fixes the small, annoying problems with subtitle files: audio that is
 a couple of seconds out of sync, a frame-rate mismatch that makes captions
 drift, the wrong container format, and overlapping or empty cues. It reads
-SubRip (`.srt`) and WebVTT (`.vtt`), works entirely offline, and has no runtime
-dependencies.
+SubRip (`.srt`), WebVTT (`.vtt`) and Advanced SubStation Alpha (`.ass`, and
+the older `.ssa`), works entirely offline, and has no runtime dependencies.
 
 ## Why
 
@@ -72,8 +72,9 @@ cat in.srt | subtidy shift --by +2.5 - | subtidy clean --snap-gaps 120 -
 ```
 
 With stdin the input format is auto-detected by content: a leading `WEBVTT`
-header means WebVTT, anything else is treated as SubRip. Pass
-`--input <srt|vtt>` to override the detection explicitly:
+header means WebVTT, a leading `[Script Info]` means ASS, anything else is
+treated as SubRip. Pass `--input <srt|vtt|ass|ssa>` to override the detection
+explicitly:
 
 ```bash
 cat headerless.vtt | subtidy clean --input vtt - > tidy.vtt
@@ -113,8 +114,9 @@ subtidy retime --scale 1.0427 in.srt
 
 ### convert
 
-Convert between `.srt` and `.vtt`. The target format comes from the `-o`
-extension, or from `--to` when writing to stdout.
+Convert between `.srt`, `.vtt` and `.ass`. The target format comes from the
+`-o` extension, or from `--to` when writing to stdout. `.ssa` is read, and
+written as `.ass`.
 
 ```bash
 subtidy convert -o out.vtt in.srt
@@ -125,6 +127,27 @@ subtidy convert --to vtt in.srt > out.vtt
 WebVTT headers, `NOTE`/`STYLE`/`REGION` blocks, cue identifiers, and cue
 settings (e.g. `align:start`) are read but not carried over; cues are renumbered
 on output.
+
+#### ASS / SSA
+
+- Each `Dialogue:` line in `[Events]` is a cue, read by the section's own
+  `Format:` line, so the text keeps its commas. `Comment:` lines are not cues
+  and are not written back.
+- `\N` and `\n` become line breaks and `\h` a no-break space; `{\i1}`,
+  `{\b1}`, `{\u1}` (and their `0` forms) become `<i>`, `<b>`, `<u>`. Every
+  other override (`{\pos(...)}`, `{\fad(...)}`, colours, karaoke) is left
+  out of the SRT/VTT text.
+- `.ass` to `.ass` (`shift`, `retime`, `clean`) keeps everything else:
+  `[Script Info]`, styles, `[Fonts]`, each cue's layer, style, actor, margins
+  and effect, and the original text with all its overrides, unless the cue's
+  text was changed.
+- From `.srt`/`.vtt` to `.ass`, a header with one `Default` style is written
+  (1920x1080, Arial 72); `<i>`/`<b>`/`<u>` become overrides and other markup is
+  dropped. A `{` in the text starts an override block in ASS, which has no way
+  to escape it.
+- From `.ssa`, the styles are not carried over to `.ass` (the v4 style format
+  differs), but each cue keeps its style name.
+- ASS times are in hundredths of a second, so writing `.ass` rounds to 10 ms.
 
 ### clean
 
@@ -150,8 +173,8 @@ Report problems without changing the file. Two kinds of issue are found:
 
 - Timing errors: non-positive duration, overlap with the next cue, cues out of
   order, and empty text. These always make the exit code non-zero.
-- Readability warnings: reading speed, display time, and line length, each
-  against a configurable threshold. Warnings are reported but do not affect
+- Readability warnings: reading speed, display time, line length, and lines
+  per cue, each against a configurable threshold. Warnings are reported but do not affect
   the exit code unless you pass `--strict`.
 
 ```bash
@@ -166,11 +189,14 @@ subtidy check captions.srt
 | `--cps <n>` | 20 | Maximum reading speed in characters per second (newlines excluded) |
 | `--min-duration <ms>` | 700 | Minimum time a cue must stay on screen |
 | `--max-line <chars>` | 42 | Maximum characters per line (each line of a multi-line cue) |
+| `--max-lines <n>` | 2 | Maximum lines in one cue |
 | `--strict` | off | Readability warnings also make the exit code non-zero |
 | `--json` | off | Print issues as JSON to stdout |
 
-Characters are counted as Unicode code points after NFC normalization, and a
-value exactly at a threshold passes. Normalizing first means a character
+Only the text a viewer reads is counted: markup such as `<i>`, `<font ...>`,
+WebVTT `<c.x>` / `<v Name>` and ASS override blocks is left out. Characters are
+counted as Unicode code points after NFC normalization, and a value exactly at
+a threshold passes. Normalizing first means a character
 written decomposed (a base letter plus a combining mark, e.g. `e` + U+0301)
 counts the same as its precomposed form (`é`), rather than inflating the count.
 This is an NFC-based approximation, not full grapheme clustering: a sequence

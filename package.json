@@ -1,6 +1,6 @@
 {
   "name": "@printemps-tokyo/subtidy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tidy, shift, and convert .srt/.vtt subtitle files. Zero-dependency CLI.",
   "type": "module",
   "license": "MIT",

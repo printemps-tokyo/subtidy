@@ -24,7 +24,7 @@ import { usageError } from "./usage.js";
 
 const COMMANDS = new Set(["shift", "retime", "convert", "clean", "check"]);
 
-const HELP = `subtidy - tidy, shift, and convert subtitle files (.srt / .vtt)
+const HELP = `subtidy - tidy, shift, and convert subtitle files (.srt / .vtt / .ass / .ssa)
 
 Usage:
   subtidy <command> [options] <file | ->
@@ -32,7 +32,7 @@ Usage:
 Commands:
   shift    Move every cue by a number of seconds (sync correction)
   retime   Scale every timestamp by a factor (frame-rate mismatch)
-  convert  Convert between .srt and .vtt
+  convert  Convert between .srt, .vtt and .ass (.ssa is read, and written as .ass)
   clean    Sort, drop empty cues, fix overlaps, and renumber
   check    Report timing errors and readability warnings (non-zero exit on
            timing errors; add --strict to fail on warnings too)
@@ -43,11 +43,12 @@ Pass "-" as the input file to read the subtitle text from stdin. Without
 Common options:
   -o, --output <file>   Write here; the extension picks the output format
                         (default: write to stdout in the input's format)
-  --input <srt|vtt>     Input format, for when it cannot be inferred from the
+  --input <srt|vtt|ass|ssa>
+                        Input format, for when it cannot be inferred from the
                         input extension. Stdin defaults to auto-detect: a
                         leading WEBVTT header means vtt, anything else is
                         treated as srt.
-  --to <srt|vtt>        Output format, regardless of the output extension
+  --to <srt|vtt|ass>    Output format, regardless of the output extension
   -h, --help            Show this help
   -v, --version         Show version
 
@@ -69,6 +70,7 @@ check options:
                         slower per character, so consider a lower value)
   --min-duration <ms>   Warn when a cue is shown for less than this (default 700)
   --max-line <chars>    Warn when a line is longer than this (default 42)
+  --max-lines <n>       Warn when a cue has more lines than this (default 2)
   --strict              Readability warnings also make the exit code non-zero
   --json                Print issues as JSON to stdout, for CI
 
@@ -153,13 +155,14 @@ interface Values {
   cps?: string;
   "min-duration"?: string;
   "max-line"?: string;
+  "max-lines"?: string;
   strict?: boolean;
   json?: boolean;
 }
 
 /** Narrow an --input/--to value to a subtitle format, or return undefined. */
 function asFormat(value: string | undefined): SubFormat | undefined {
-  return value === "srt" || value === "vtt" ? value : undefined;
+  return value === "srt" || value === "vtt" || value === "ass" || value === "ssa" ? value : undefined;
 }
 
 /** Read all of stdin as UTF-8 text. */
@@ -228,6 +231,9 @@ function runCheck(text: string, inFormat: SubFormat, values: Values): number {
   if (values["max-line"] !== undefined) {
     lintOptions.maxLineLength = parsePositiveInt("max-line", values["max-line"]);
   }
+  if (values["max-lines"] !== undefined) {
+    lintOptions.maxLines = parsePositiveInt("max-lines", values["max-lines"]);
+  }
 
   const cues = parseByFormat(text, inFormat);
   const issues = buildCheckIssues(cues, lintOptions);
@@ -289,6 +295,7 @@ async function main(): Promise<number> {
         cps: { type: "string" },
         "min-duration": { type: "string" },
         "max-line": { type: "string" },
+        "max-lines": { type: "string" },
         strict: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
       },
@@ -321,6 +328,7 @@ async function main(): Promise<number> {
     if (values.cps !== undefined) checkFlags.push("--cps");
     if (values["min-duration"] !== undefined) checkFlags.push("--min-duration");
     if (values["max-line"] !== undefined) checkFlags.push("--max-line");
+    if (values["max-lines"] !== undefined) checkFlags.push("--max-lines");
     if (values.strict) checkFlags.push("--strict");
     if (values.json) checkFlags.push("--json");
     if (checkFlags.length > 0) {
@@ -365,7 +373,7 @@ async function main(): Promise<number> {
   try {
     const cues = parseByFormat(text, inFormat);
     const result = transform(command, cues, values);
-    output = serializeByFormat(result, outFormat);
+    output = serializeByFormat(result, outFormat, { format: inFormat, text });
   } catch (err) {
     process.stderr.write(`error: ${(err as Error).message}\n`);
     return 1;

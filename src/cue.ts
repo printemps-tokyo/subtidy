@@ -5,6 +5,8 @@
  * is pure (no IO) and returns a new array, which keeps them easy to unit test.
  */
 
+import type { AssFields } from "./ass.js";
+
 export interface Cue {
   /** Start time in milliseconds from the media origin. */
   startMs: number;
@@ -12,6 +14,8 @@ export interface Cue {
   endMs: number;
   /** Cue text; may contain `\n` for multiple lines. */
   text: string;
+  /** The ASS fields of a cue read from .ass/.ssa, kept for writing .ass. */
+  ass?: AssFields;
 }
 
 /** A problem found by {@link validateCues}. `index` is the cue's position. */
@@ -29,6 +33,8 @@ export interface LintOptions {
   minDurationMs: number;
   /** Maximum number of characters allowed on a single line. */
   maxLineLength: number;
+  /** Maximum number of lines in one cue. */
+  maxLines: number;
 }
 
 /**
@@ -39,12 +45,13 @@ export const DEFAULT_LINT_OPTIONS: LintOptions = {
   maxCps: 20,
   minDurationMs: 700,
   maxLineLength: 42,
+  maxLines: 2,
 };
 
 /** A readability problem found by {@link lintCues}. `index` is the cue's position. */
 export interface LintIssue {
   index: number;
-  kind: "cps" | "min-duration" | "line-length";
+  kind: "cps" | "min-duration" | "line-length" | "line-count";
   /**
    * The measured value: chars/s (rounded to two decimals, never rounded down
    * to the limit or below), display time in ms, or line length in chars.
@@ -182,20 +189,31 @@ export function validateCues(cues: Cue[]): CueIssue[] {
 const countChars = (text: string): number => Array.from(text.normalize("NFC")).length;
 
 /**
+ * The text a viewer reads: markup is not counted. Drops HTML-style tags
+ * (<i>, </b>, <font ...>, VTT <c.x> and <v Name>) and ASS override blocks
+ * ({\pos(...)}).
+ */
+export function visibleText(text: string): string {
+  return text.replace(/<\/?[a-zA-Z][^>]*>/g, "").replace(/\{\\[^}]*\}/g, "");
+}
+
+/**
  * Report readability problems without modifying the cues: reading speed above
  * `maxCps` (characters per second, newlines excluded), display time below
- * `minDurationMs`, and lines longer than `maxLineLength` characters. Values
- * exactly at a threshold pass. Cues with a non-positive duration are skipped
+ * `minDurationMs`, lines longer than `maxLineLength` characters, and cues
+ * of more than `maxLines` lines. Markup is not counted (see
+ * {@link visibleText}). Values exactly at a threshold pass. Cues with a non-positive duration are skipped
  * by the speed and duration checks; {@link validateCues} reports those.
  */
 export function lintCues(cues: Cue[], options: Partial<LintOptions> = {}): LintIssue[] {
-  const { maxCps, minDurationMs, maxLineLength } = { ...DEFAULT_LINT_OPTIONS, ...options };
+  const { maxCps, minDurationMs, maxLineLength, maxLines } = { ...DEFAULT_LINT_OPTIONS, ...options };
   const issues: LintIssue[] = [];
   for (let i = 0; i < cues.length; i++) {
     const c = cues[i] as Cue;
+    const shown = visibleText(c.text);
     const durationMs = c.endMs - c.startMs;
     if (durationMs > 0) {
-      const cps = (countChars(c.text.replace(/\n/g, "")) * 1000) / durationMs;
+      const cps = (countChars(shown.replace(/\n/g, "")) * 1000) / durationMs;
       if (cps > maxCps) {
         // Report two decimals, and never round the value down to (or below)
         // the limit: a cue at 20.004 chars/s with limit 20 must not print
@@ -223,7 +241,8 @@ export function lintCues(cues: Cue[], options: Partial<LintOptions> = {}): LintI
         });
       }
     }
-    const longest = Math.max(...c.text.split("\n").map(countChars));
+    const lines = shown.split("\n");
+    const longest = Math.max(...lines.map(countChars));
     if (longest > maxLineLength) {
       issues.push({
         index: i,
@@ -231,6 +250,15 @@ export function lintCues(cues: Cue[], options: Partial<LintOptions> = {}): LintI
         value: longest,
         limit: maxLineLength,
         message: `line is ${longest} chars (limit ${maxLineLength})`,
+      });
+    }
+    if (lines.length > maxLines) {
+      issues.push({
+        index: i,
+        kind: "line-count",
+        value: lines.length,
+        limit: maxLines,
+        message: `${lines.length} lines (limit ${maxLines})`,
       });
     }
   }
